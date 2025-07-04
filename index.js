@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const { Dropbox } = require("dropbox");
+const TelegramBot = require("node-telegram-bot-api");
 const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 require("dotenv").config();
 
@@ -14,9 +15,9 @@ const dbx = new Dropbox({
 });
 
 // =====================
-// 🗂 Session Paths
+// 🗂 Session Path (Fixed to .wwebjs_auth)
 // =====================
-const SESSION_FILE_PATH = path.join(__dirname, "session", "Default", "session.json");
+const SESSION_FILE_PATH = path.join(__dirname, ".wwebjs_auth", "default", "session.json");
 const DROPBOX_FILE_PATH = "/wa-session.json";
 
 // =====================
@@ -61,7 +62,7 @@ async function saveSessionToDropbox() {
   await restoreSessionFromDropbox();
 
   const client = new Client({
-    authStrategy: new LocalAuth(),
+    authStrategy: new LocalAuth({ clientId: "default" }),
     puppeteer: {
       headless: true,
       args: [
@@ -74,6 +75,9 @@ async function saveSessionToDropbox() {
       ],
     },
   });
+
+  const telegramBot = new TelegramBot(process.env.TG_BOT_TOKEN, { polling: true });
+  const WHATSAPP_CHAT_ID = process.env.WA_CHAT_ID; // like 1234567890@g.us
 
   client.on("qr", (qr) => {
     console.log("📸 Scan this QR code:");
@@ -96,6 +100,27 @@ async function saveSessionToDropbox() {
 
   client.on("disconnected", (reason) => {
     console.warn("⚠️ Client was disconnected:", reason);
+  });
+
+  telegramBot.on("message", async (msg) => {
+    const chatId = msg.chat.id;
+
+    if (msg.text) {
+      await client.sendMessage(WHATSAPP_CHAT_ID, msg.text);
+      console.log("➡️ Forwarded text to WhatsApp:", msg.text);
+    }
+
+    if (msg.photo || msg.document || msg.video || msg.audio || msg.voice) {
+      const fileId = msg.photo?.slice(-1)[0]?.file_id || msg.document?.file_id || msg.video?.file_id || msg.audio?.file_id || msg.voice?.file_id;
+      const file = await telegramBot.getFile(fileId);
+      const fileUrl = `https://api.telegram.org/file/bot${process.env.TG_BOT_TOKEN}/${file.file_path}`;
+
+      const mediaBuffer = await fetch(fileUrl).then(res => res.buffer());
+      const fileName = path.basename(file.file_path);
+
+      await client.sendMessage(WHATSAPP_CHAT_ID, mediaBuffer, { filename: fileName, caption: msg.caption || "" });
+      console.log("➡️ Forwarded media to WhatsApp:", fileName);
+    }
   });
 
   client.initialize();
