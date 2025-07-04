@@ -2,19 +2,26 @@ const fs = require("fs");
 const path = require("path");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const { Dropbox } = require("dropbox");
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+const fetch = (...args) => import("node-fetch").then(({ default: fetch }) => fetch(...args));
 require("dotenv").config();
 
-// Setup Dropbox
+// =====================
+// 🔐 Dropbox Config
+// =====================
 const dbx = new Dropbox({
   accessToken: process.env.DROPBOX_TOKEN,
   fetch,
 });
 
+// =====================
+// 🗂 Session Paths
+// =====================
 const SESSION_FILE_PATH = path.join(__dirname, "session", "Default", "session.json");
 const DROPBOX_FILE_PATH = "/wa-session.json";
 
-// Step 1: Download session from Dropbox before starting client
+// =====================
+// ⬇️ Restore Session from Dropbox
+// =====================
 async function restoreSessionFromDropbox() {
   try {
     const res = await dbx.filesDownload({ path: DROPBOX_FILE_PATH });
@@ -26,29 +33,45 @@ async function restoreSessionFromDropbox() {
   }
 }
 
-// Step 2: After client is ready, upload session back to Dropbox
+// =====================
+// ⬆️ Save Session to Dropbox
+// =====================
 async function saveSessionToDropbox() {
   try {
-    const sessionData = fs.readFileSync(SESSION_FILE_PATH);
-    await dbx.filesUpload({
-      path: DROPBOX_FILE_PATH,
-      contents: sessionData,
-      mode: { ".tag": "overwrite" },
-    });
-    console.log("✅ Session file uploaded to Dropbox");
+    if (fs.existsSync(SESSION_FILE_PATH)) {
+      const sessionData = fs.readFileSync(SESSION_FILE_PATH);
+      await dbx.filesUpload({
+        path: DROPBOX_FILE_PATH,
+        contents: sessionData,
+        mode: { ".tag": "overwrite" },
+      });
+      console.log("✅ Session file uploaded to Dropbox");
+    } else {
+      console.warn("⚠️ Session file not found to upload");
+    }
   } catch (err) {
     console.error("❌ Failed to upload session to Dropbox:", err.message);
   }
 }
 
+// =====================
+// 🚀 Main WhatsApp Client
+// =====================
 (async () => {
   await restoreSessionFromDropbox();
 
   const client = new Client({
     authStrategy: new LocalAuth(),
     puppeteer: {
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
       headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process'
+      ],
     },
   });
 
@@ -68,11 +91,11 @@ async function saveSessionToDropbox() {
   });
 
   client.on("auth_failure", (msg) => {
-    console.error("❌ Auth failure:", msg);
+    console.error("❌ Authentication failure:", msg);
   });
 
   client.on("disconnected", (reason) => {
-    console.log("⚠️ Disconnected:", reason);
+    console.warn("⚠️ Client was disconnected:", reason);
   });
 
   client.initialize();
